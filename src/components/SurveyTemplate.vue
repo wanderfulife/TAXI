@@ -8,15 +8,26 @@
     <!-- Survey Tabs (only show when in survey mode and there are surveys) -->
     <div v-if="currentStep === 'survey' && surveys.length > 0" class="survey-tabs-container">
       <div class="survey-tabs">
-        <button
+        <div
           v-for="(survey, index) in surveys"
           :key="survey.id"
-          @click="switchToSurvey(index)"
-          :class="['survey-tab', { 'active': index === activeSurveyIndex, 'completed': survey.isSurveyComplete }]"
+          :class="['survey-tab-wrapper', { 'active': index === activeSurveyIndex }]"
         >
-          {{ survey.label }}
-          <span v-if="survey.isSurveyComplete" class="completed-badge">✓</span>
-        </button>
+          <button
+            @click="switchToSurvey(index)"
+            :class="['survey-tab', { 'active': index === activeSurveyIndex, 'completed': survey.isSurveyComplete }]"
+          >
+            {{ survey.label }}
+            <span v-if="survey.isSurveyComplete" class="completed-badge">✓</span>
+          </button>
+          <button
+            @click="showSurveyInfo(index, $event)"
+            class="survey-info-btn"
+            title="Info / Renommer"
+          >
+            ℹ️
+          </button>
+        </div>
       </div>
       <button @click="startNewVehicleSurvey" class="btn-new-vehicle">
         + Nouveau Véhicule
@@ -298,6 +309,72 @@
         </iframe>
       </div>
     </div>
+
+    <!-- Survey Info Modal -->
+    <div v-if="showSurveyInfoModal && selectedSurveyForInfo !== null" class="modal" @click="closeSurveyInfoModal">
+      <div class="modal-content survey-info-modal" @click.stop>
+        <button class="close" @click="closeSurveyInfoModal">×</button>
+
+        <h2>Informations du questionnaire</h2>
+
+        <!-- Survey Name -->
+        <div class="survey-info-section">
+          <h3>Nom du véhicule</h3>
+          <div v-if="!editingSurveyName" class="survey-name-display">
+            <span>{{ surveys[selectedSurveyForInfo].label }}</span>
+            <button @click="startEditingSurveyName" class="btn-edit">Renommer</button>
+          </div>
+          <div v-else class="survey-name-edit">
+            <input
+              v-model="newSurveyName"
+              class="form-control"
+              @keyup.enter="saveSurveyName"
+            />
+            <button @click="saveSurveyName" class="btn-save">Enregistrer</button>
+            <button @click="editingSurveyName = false" class="btn-cancel">Annuler</button>
+          </div>
+        </div>
+
+        <!-- Survey Time Info -->
+        <div class="survey-info-section">
+          <h3>Horaires</h3>
+          <p><strong>Heure d'arrivée:</strong> {{ surveys[selectedSurveyForInfo].startDate || 'Non démarré' }}</p>
+          <p><strong>Statut:</strong> {{ surveys[selectedSurveyForInfo].isSurveyComplete ? 'Terminé' : 'En cours' }}</p>
+        </div>
+
+        <!-- Survey Answers -->
+        <div class="survey-info-section">
+          <h3>Réponses</h3>
+          <div v-if="getSurveyAnswersSummary(selectedSurveyForInfo).length === 0">
+            <p>Aucune réponse enregistrée</p>
+          </div>
+          <div v-else class="survey-answers-list">
+            <div
+              v-for="(answer, idx) in getSurveyAnswersSummary(selectedSurveyForInfo)"
+              :key="idx"
+              class="answer-item"
+            >
+              <strong>{{ answer.question }}</strong>
+              <span>{{ answer.answer }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="survey-info-actions">
+          <button
+            v-if="!surveys[selectedSurveyForInfo].isSurveyComplete"
+            @click="switchToSurvey(selectedSurveyForInfo); closeSurveyInfoModal()"
+            class="btn-next"
+          >
+            Continuer ce questionnaire
+          </button>
+          <button @click="removeSurvey(selectedSurveyForInfo); closeSurveyInfoModal()" class="btn-delete">
+            Supprimer
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -354,6 +431,12 @@ const props = defineProps({
 const surveys = ref([]);
 const activeSurveyIndex = ref(0);
 const nextSurveyId = ref(1);
+
+// Survey info modal
+const showSurveyInfoModal = ref(false);
+const selectedSurveyForInfo = ref(null);
+const editingSurveyName = ref(false);
+const newSurveyName = ref("");
 
 // Enqueteur state (shared across all surveys)
 const currentStep = ref("enqueteur");
@@ -589,6 +672,48 @@ const startNewVehicleSurvey = () => {
   switchToSurvey(newIndex);
   // Initialize the survey
   initializeSurvey();
+};
+
+// Show survey info modal
+const showSurveyInfo = (index, event) => {
+  event.stopPropagation(); // Prevent switching to the survey
+  selectedSurveyForInfo.value = index;
+  const survey = surveys.value[index];
+  newSurveyName.value = survey.label;
+  showSurveyInfoModal.value = true;
+  editingSurveyName.value = false;
+};
+
+// Close survey info modal
+const closeSurveyInfoModal = () => {
+  showSurveyInfoModal.value = false;
+  selectedSurveyForInfo.value = null;
+  editingSurveyName.value = false;
+};
+
+// Start editing survey name
+const startEditingSurveyName = () => {
+  editingSurveyName.value = true;
+};
+
+// Save new survey name
+const saveSurveyName = () => {
+  if (selectedSurveyForInfo.value !== null && newSurveyName.value.trim()) {
+    surveys.value[selectedSurveyForInfo.value].label = newSurveyName.value.trim();
+    editingSurveyName.value = false;
+  }
+};
+
+// Get survey answers summary
+const getSurveyAnswersSummary = (surveyIndex) => {
+  const survey = surveys.value[surveyIndex];
+  if (!survey || !survey.answers || !survey.answers.question_answers) {
+    return [];
+  }
+  return survey.answers.question_answers.map(qa => ({
+    question: qa.questionText,
+    answer: qa.optionText
+  }));
 };
 
 // Initialize survey (replaces part of startSurveyActual logic)
@@ -1067,6 +1192,12 @@ const finishSurvey = async () => {
     }
 
     await addDoc(surveyCollectionRef.value, surveyResult);
+
+    // Auto-remove completed survey from tabs
+    const completedIndex = activeSurveyIndex.value;
+    setTimeout(() => {
+      removeSurvey(completedIndex);
+    }, 100); // Small delay to ensure state updates properly
 
   } catch (error) {
     console.error("Error saving survey:", error);
@@ -1688,6 +1819,13 @@ html, body {
   align-items: center;
 }
 
+.survey-tab-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+}
+
 .survey-tab {
   padding: 10px 16px;
   background-color: #4a5a83;
@@ -1704,6 +1842,29 @@ html, body {
   white-space: nowrap;
   -webkit-tap-highlight-color: rgba(0,0,0,0.1);
   touch-action: manipulation;
+}
+
+.survey-info-btn {
+  padding: 6px 10px;
+  background-color: #3498db;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  -webkit-tap-highlight-color: rgba(0,0,0,0.1);
+  touch-action: manipulation;
+}
+
+.survey-info-btn:hover {
+  background-color: #2980b9;
+  transform: scale(1.1);
 }
 
 .survey-tab:hover {
@@ -1880,6 +2041,159 @@ html, body {
 @media screen and (min-width: 768px) {
   .modal-content {
     padding: 30px;
+  }
+}
+
+/* Survey Info Modal Styles */
+.survey-info-modal {
+  max-width: 600px;
+  max-height: 80vh;
+  overflow-y: auto;
+  background-color: #2a3b63;
+  color: white;
+}
+
+.survey-info-modal h2 {
+  margin-top: 0;
+  margin-bottom: 20px;
+  color: white;
+  text-align: center;
+}
+
+.survey-info-modal h3 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  color: #4caf50;
+  font-size: 16px;
+}
+
+.survey-info-section {
+  margin-bottom: 25px;
+  padding: 15px;
+  background-color: #1e2b47;
+  border-radius: 8px;
+}
+
+.survey-info-section p {
+  margin: 8px 0;
+  color: white;
+}
+
+.survey-name-display {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex-wrap: wrap;
+}
+
+.survey-name-display span {
+  font-size: 18px;
+  font-weight: 600;
+  color: white;
+}
+
+.survey-name-edit {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.btn-edit, .btn-save, .btn-cancel, .btn-delete {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.btn-edit {
+  background-color: #3498db;
+  color: white;
+}
+
+.btn-edit:hover {
+  background-color: #2980b9;
+}
+
+.btn-save {
+  background-color: #4caf50;
+  color: white;
+}
+
+.btn-save:hover {
+  background-color: #45a049;
+}
+
+.btn-cancel {
+  background-color: #95a5a6;
+  color: white;
+}
+
+.btn-cancel:hover {
+  background-color: #7f8c8d;
+}
+
+.btn-delete {
+  background-color: #e74c3c;
+  color: white;
+}
+
+.btn-delete:hover {
+  background-color: #c0392b;
+}
+
+.survey-answers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.answer-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px;
+  background-color: #4a5a83;
+  border-radius: 5px;
+}
+
+.answer-item strong {
+  color: #4caf50;
+  font-size: 14px;
+}
+
+.answer-item span {
+  color: white;
+  font-size: 15px;
+}
+
+.survey-info-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+
+@media screen and (max-width: 768px) {
+  .survey-info-modal {
+    width: 95%;
+    max-height: 90vh;
+  }
+
+  .survey-name-display,
+  .survey-name-edit,
+  .survey-info-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .survey-name-edit input,
+  .survey-name-edit button {
+    width: 100%;
   }
 }
 
