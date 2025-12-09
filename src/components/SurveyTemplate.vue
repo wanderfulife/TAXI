@@ -5,6 +5,24 @@
       <div class="progress" :style="{ width: `${progress}%` }"></div>
     </div>
 
+    <!-- Survey Tabs (only show when in survey mode and there are surveys) -->
+    <div v-if="currentStep === 'survey' && surveys.length > 0" class="survey-tabs-container">
+      <div class="survey-tabs">
+        <button
+          v-for="(survey, index) in surveys"
+          :key="survey.id"
+          @click="switchToSurvey(index)"
+          :class="['survey-tab', { 'active': index === activeSurveyIndex, 'completed': survey.isSurveyComplete }]"
+        >
+          {{ survey.label }}
+          <span v-if="survey.isSurveyComplete" class="completed-badge">✓</span>
+        </button>
+      </div>
+      <button @click="startNewVehicleSurvey" class="btn-new-vehicle">
+        + Nouveau Véhicule
+      </button>
+    </div>
+
     <div class="content-container">
       <!-- Enqueteur Input Step -->
       <div v-if="currentStep === 'enqueteur'">
@@ -58,7 +76,7 @@
               class="btn-next"
               :disabled="!selectedCommune.trim()"
             >
-              {{ isLastQuestion ? "Terminer" : "Suivant" }}
+              {{ isLastQuestion ? "Départ véhicule" : "Suivant" }}
             </button>
           </div>
 
@@ -86,7 +104,7 @@
               class="btn-next" 
               :disabled="!stationInput.trim()"
             >
-              {{ isLastQuestion ? "Terminer" : "Suivant" }}
+              {{ isLastQuestion ? "Départ véhicule" : "Suivant" }}
             </button>
           </div>
 
@@ -98,7 +116,7 @@
               class="btn-next" 
               :disabled="!selectedGareName || !selectedGareName.trim()"
             >
-              {{ isLastQuestion ? "Terminer" : "Suivant" }}
+              {{ isLastQuestion ? "Départ véhicule" : "Suivant" }}
             </button>
           </div>
 
@@ -126,7 +144,7 @@
               class="btn-next" 
               :disabled="!streetInput.trim()"
             >
-              {{ isLastQuestion ? "Terminer" : "Suivant" }}
+              {{ isLastQuestion ? "Départ véhicule" : "Suivant" }}
             </button>
           </div>
 
@@ -153,7 +171,7 @@
               @click="handleMultipleChoiceAnswer"
               class="btn-next"
             >
-              {{ isLastQuestion ? "Terminer" : "Suivant" }}
+              {{ isLastQuestion ? "Départ véhicule" : "Suivant" }}
             </button>
           </div>
           
@@ -185,7 +203,7 @@
               class="btn-next"
               :disabled="!isValidFreeTextAnswer()"
             >
-              {{ isLastQuestion ? "Terminer" : "Suivant" }}
+              {{ isLastQuestion ? "Départ véhicule" : "Suivant" }}
             </button>
           </div>
           
@@ -212,9 +230,14 @@
       <!-- Survey Complete Step -->
       <div v-else-if="isSurveyComplete" class="survey-complete">
         <h2>Merci pour votre réponse et bonne journée.</h2>
-        <button @click="resetSurvey" class="btn-next">
-          Nouveau questionnaire
-        </button>
+        <div class="survey-complete-actions">
+          <button @click="removeSurvey(activeSurveyIndex)" class="btn-next">
+            Fermer ce questionnaire
+          </button>
+          <button v-if="surveys.length === 1" @click="resetSurvey" class="btn-next">
+            Nouveau questionnaire
+          </button>
+        </div>
       </div>
 
       <!-- Logo -->
@@ -327,37 +350,92 @@ const props = defineProps({
   },
 });
 
-// Core State
+// Multiple Survey Management
+const surveys = ref([]);
+const activeSurveyIndex = ref(0);
+const nextSurveyId = ref(1);
+
+// Enqueteur state (shared across all surveys)
 const currentStep = ref("enqueteur");
 const enqueteurInputRef = ref("");
 const savedEnqueteur = ref("");
-const startDate = ref("");
-const currentQuestionIndex = ref(0);
-const currentQuestion = ref(null);
-const answers = ref({ question_answers: [] });
-const freeTextAnswer = ref("");
-const multipleChoiceSelections = ref([]);
-const questionPath = ref([]);
-const isSurveyComplete = ref(false);
-const isFinishing = ref(false);
 
-// Added for remembering Poste de Travail
+// Added for remembering Poste de Travail (shared across all surveys)
 const savedPosteTravailValue = ref(null);
 const savedPosteTravailText = ref("");
 const savedPosteTravailOptionIndex = ref(-1);
 
-// State for CommuneSelector
-const selectedCommune = ref("");
-const postalCodePrefix = ref("");
+// Helper to get active survey
+const activeSurvey = computed(() => {
+  if (surveys.value.length === 0) return null;
+  return surveys.value[activeSurveyIndex.value];
+});
 
-// State for Station/Street selection
-const stationInput = ref("");
-const streetInput = ref("");
-const filteredStations = ref([]);
-const filteredStreets = ref([]);
-
-// State for Gare selection (using GareSelector component now)
-const selectedGareName = ref("");
+// Computed properties that delegate to active survey
+const startDate = computed({
+  get: () => activeSurvey.value?.startDate || "",
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.startDate = val; }
+});
+const currentQuestionIndex = computed({
+  get: () => activeSurvey.value?.currentQuestionIndex || 0,
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.currentQuestionIndex = val; }
+});
+const currentQuestion = computed({
+  get: () => activeSurvey.value?.currentQuestion || null,
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.currentQuestion = val; }
+});
+const answers = computed({
+  get: () => activeSurvey.value?.answers || { question_answers: [] },
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.answers = val; }
+});
+const freeTextAnswer = computed({
+  get: () => activeSurvey.value?.freeTextAnswer || "",
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.freeTextAnswer = val; }
+});
+const multipleChoiceSelections = computed({
+  get: () => activeSurvey.value?.multipleChoiceSelections || [],
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.multipleChoiceSelections = val; }
+});
+const questionPath = computed({
+  get: () => activeSurvey.value?.questionPath || [],
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.questionPath = val; }
+});
+const isSurveyComplete = computed({
+  get: () => activeSurvey.value?.isSurveyComplete || false,
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.isSurveyComplete = val; }
+});
+const isFinishing = computed({
+  get: () => activeSurvey.value?.isFinishing || false,
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.isFinishing = val; }
+});
+const selectedCommune = computed({
+  get: () => activeSurvey.value?.selectedCommune || "",
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.selectedCommune = val; }
+});
+const postalCodePrefix = computed({
+  get: () => activeSurvey.value?.postalCodePrefix || "",
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.postalCodePrefix = val; }
+});
+const stationInput = computed({
+  get: () => activeSurvey.value?.stationInput || "",
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.stationInput = val; }
+});
+const streetInput = computed({
+  get: () => activeSurvey.value?.streetInput || "",
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.streetInput = val; }
+});
+const filteredStations = computed({
+  get: () => activeSurvey.value?.filteredStations || [],
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.filteredStations = val; }
+});
+const filteredStreets = computed({
+  get: () => activeSurvey.value?.filteredStreets || [],
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.filteredStreets = val; }
+});
+const selectedGareName = computed({
+  get: () => activeSurvey.value?.selectedGareName || "",
+  set: (val) => { if (activeSurvey.value) activeSurvey.value.selectedGareName = val; }
+});
 
 // UI State
 const showPdf = ref(false);
@@ -451,6 +529,148 @@ const imageTransform = computed(() => {
 });
 
 // Methods
+
+// Create a new survey instance
+const createNewSurvey = (label = null) => {
+  const surveyId = nextSurveyId.value++;
+  const surveyLabel = label || `Véhicule ${surveyId}`;
+
+  const newSurvey = {
+    id: surveyId,
+    label: surveyLabel,
+    startDate: "",
+    currentQuestionIndex: 0,
+    currentQuestion: null,
+    answers: { question_answers: [] },
+    freeTextAnswer: "",
+    multipleChoiceSelections: [],
+    questionPath: [],
+    isSurveyComplete: false,
+    isFinishing: false,
+    selectedCommune: "",
+    postalCodePrefix: "",
+    stationInput: "",
+    streetInput: "",
+    filteredStations: [],
+    filteredStreets: [],
+    selectedGareName: "",
+  };
+
+  surveys.value.push(newSurvey);
+  return surveys.value.length - 1; // Return the index of the new survey
+};
+
+// Switch to a different survey
+const switchToSurvey = (index) => {
+  if (index >= 0 && index < surveys.value.length) {
+    activeSurveyIndex.value = index;
+  }
+};
+
+// Remove a completed survey
+const removeSurvey = (index) => {
+  if (surveys.value.length > 1) {
+    surveys.value.splice(index, 1);
+    // Adjust active index if needed
+    if (activeSurveyIndex.value >= surveys.value.length) {
+      activeSurveyIndex.value = surveys.value.length - 1;
+    }
+  } else {
+    // If it's the last survey, just reset it
+    const surveyIndex = createNewSurvey();
+    surveys.value.splice(index, 1);
+    activeSurveyIndex.value = 0;
+  }
+};
+
+// Start a new survey for a new vehicle (called from UI button)
+const startNewVehicleSurvey = () => {
+  const newIndex = createNewSurvey();
+  switchToSurvey(newIndex);
+  // Initialize the survey
+  initializeSurvey();
+};
+
+// Initialize survey (replaces part of startSurveyActual logic)
+const initializeSurvey = () => {
+  const now = new Date();
+  if (activeSurvey.value) {
+    activeSurvey.value.startDate = now.toLocaleTimeString("fr-FR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    activeSurvey.value.answers = { question_answers: [] };
+    activeSurvey.value.freeTextAnswer = "";
+    activeSurvey.value.multipleChoiceSelections = [];
+    activeSurvey.value.selectedCommune = "";
+    activeSurvey.value.postalCodePrefix = "";
+    activeSurvey.value.stationInput = "";
+    activeSurvey.value.streetInput = "";
+    activeSurvey.value.selectedGareName = "";
+    activeSurvey.value.filteredStations = [];
+    activeSurvey.value.filteredStreets = [];
+  }
+
+  let firstQuestionId;
+  const posteTravailQId = props.posteTravailQuestionId;
+
+  // If we have a remembered POSTE value, record it in this survey's answers
+  if (posteTravailQId && savedPosteTravailValue.value !== null && savedPosteTravailText.value && activeSurvey.value) {
+    const posteQuestion = findQuestionById(posteTravailQId);
+    if (posteQuestion) {
+        // Record the remembered POSTE value in this survey's answers
+        recordAnswerToState(
+            posteTravailQId,
+            posteQuestion.text,
+            savedPosteTravailValue.value,
+            savedPosteTravailText.value,
+            savedPosteTravailOptionIndex.value !== -1 ? savedPosteTravailOptionIndex.value : undefined
+        );
+
+        const matchedOption = posteQuestion.options
+            ? posteQuestion.options.find(opt => opt.id === savedPosteTravailValue.value)
+            : null;
+        firstQuestionId = getNextQuestionId(posteQuestion, matchedOption);
+         if (!firstQuestionId || firstQuestionId === posteTravailQId) {
+            if (props.surveyQuestions && props.surveyQuestions.length > 0) {
+                 const firstSurveyQuestion = props.surveyQuestions.find(q => q.id !== posteTravailQId);
+                 firstQuestionId = firstSurveyQuestion ? firstSurveyQuestion.id : (props.surveyQuestions[0] ? props.surveyQuestions[0].id : null);
+                 if (!firstQuestionId && props.surveyQuestions[0] && props.surveyQuestions[0].id === posteTravailQId && props.surveyQuestions.length > 1) {
+                    firstQuestionId = props.surveyQuestions[1].id;
+                 } else if (!firstQuestionId && props.surveyQuestions[0]) {
+                    firstQuestionId = props.surveyQuestions[0].id;
+                 }
+            } else {
+                firstQuestionId = null;
+            }
+        }
+    } else {
+        firstQuestionId = props.surveyQuestions && props.surveyQuestions.length > 0 ? props.surveyQuestions[0].id : null;
+    }
+  } else {
+    firstQuestionId = props.surveyQuestions && props.surveyQuestions.length > 0 ? props.surveyQuestions[0].id : null;
+  }
+
+  if (activeSurvey.value) {
+    activeSurvey.value.currentQuestion = findQuestionById(firstQuestionId);
+    if (activeSurvey.value.currentQuestion) {
+      activeSurvey.value.questionPath = [activeSurvey.value.currentQuestion.id];
+
+      // Scroll to top when starting survey, with delay to prevent conflicts
+      nextTick(() => {
+        setTimeout(() => {
+          window.scrollTo({ top: 0, behavior: 'instant' });
+        }, 50);
+      });
+    } else if (firstQuestionId === 'end'){
+      finishSurvey();
+    } else {
+      console.error("Could not determine the first question. SurveyQuestions length:", props.surveyQuestions?.length);
+    }
+  }
+};
+
 const setEnqueteur = () => {
   if (enqueteurInputRef.value.trim() !== "") {
     savedEnqueteur.value = enqueteurInputRef.value.trim();
@@ -461,84 +681,16 @@ const setEnqueteur = () => {
 };
 
 const startSurveyActual = () => {
-  const now = new Date();
-  startDate.value = now.toLocaleTimeString("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  answers.value = { question_answers: [] };
+  // Create the first survey instance
+  if (surveys.value.length === 0) {
+    createNewSurvey();
+    activeSurveyIndex.value = 0;
+  }
+
   currentStep.value = "survey";
-  isSurveyComplete.value = false;
-  
-  freeTextAnswer.value = "";
-  multipleChoiceSelections.value = [];
-  selectedCommune.value = "";
-  postalCodePrefix.value = "";
-  stationInput.value = "";
-  streetInput.value = "";
-  selectedGareName.value = "";
-  filteredStations.value = [];
-  filteredStreets.value = [];
 
-  let firstQuestionId;
-  const posteTravailQId = props.posteTravailQuestionId;
-
-  // If we have a remembered POSTE value, record it in this survey's answers
-  if (posteTravailQId && savedPosteTravailValue.value !== null && savedPosteTravailText.value) {
-    const posteQuestion = findQuestionById(posteTravailQId);
-    if (posteQuestion) {
-        // Record the remembered POSTE value in this survey's answers
-        recordAnswerToState(
-            posteTravailQId,
-            posteQuestion.text, 
-            savedPosteTravailValue.value,
-            savedPosteTravailText.value,
-            savedPosteTravailOptionIndex.value !== -1 ? savedPosteTravailOptionIndex.value : undefined
-        );
-        
-        const matchedOption = posteQuestion.options 
-            ? posteQuestion.options.find(opt => opt.id === savedPosteTravailValue.value) 
-            : null;
-        firstQuestionId = getNextQuestionId(posteQuestion, matchedOption);
-         if (!firstQuestionId || firstQuestionId === posteTravailQId) {
-            if (props.surveyQuestions && props.surveyQuestions.length > 0) {
-                 const firstSurveyQuestion = props.surveyQuestions.find(q => q.id !== posteTravailQId); 
-                 firstQuestionId = firstSurveyQuestion ? firstSurveyQuestion.id : (props.surveyQuestions[0] ? props.surveyQuestions[0].id : null);
-                 if (!firstQuestionId && props.surveyQuestions[0] && props.surveyQuestions[0].id === posteTravailQId && props.surveyQuestions.length > 1) {
-                    firstQuestionId = props.surveyQuestions[1].id;
-                 } else if (!firstQuestionId && props.surveyQuestions[0]) {
-                    firstQuestionId = props.surveyQuestions[0].id;
-                 }
-            } else {
-                firstQuestionId = null; 
-            }
-        }
-    } else {
-        firstQuestionId = props.surveyQuestions && props.surveyQuestions.length > 0 ? props.surveyQuestions[0].id : null;
-    }
-  } else {
-    firstQuestionId = props.surveyQuestions && props.surveyQuestions.length > 0 ? props.surveyQuestions[0].id : null;
-  }
-
-  currentQuestion.value = findQuestionById(firstQuestionId);
-  if (currentQuestion.value) {
-    questionPath.value = [currentQuestion.value.id];
-    currentStep.value = 'survey';
-    
-    // Scroll to top when starting survey, with delay to prevent conflicts
-    nextTick(() => {
-      setTimeout(() => {
-        window.scrollTo({ top: 0, behavior: 'instant' });
-      }, 50);
-    });
-  } else if (firstQuestionId === 'end'){
-    finishSurvey();
-  } else {
-    console.error("Could not determine the first question. SurveyQuestions length:", props.surveyQuestions?.length);
-    currentStep.value = 'survey'; 
-    isSurveyComplete.value = true; 
-  }
+  // Initialize the first survey
+  initializeSurvey();
 };
 
 const recordAnswerToState = (questionId, questionText, optionId, optionText, optionIndex = -1) => {
@@ -847,12 +999,12 @@ const previousQuestion = () => {
 };
 
 const finishSurvey = async () => {
-  if (isFinishing.value) return;
-  isFinishing.value = true;
+  if (!activeSurvey.value || activeSurvey.value.isFinishing) return;
+  activeSurvey.value.isFinishing = true;
 
   try {
-    const capturedStartDate = startDate.value;
-    const capturedAnswersData = JSON.parse(JSON.stringify(answers.value));
+    const capturedStartDate = activeSurvey.value.startDate;
+    const capturedAnswersData = JSON.parse(JSON.stringify(activeSurvey.value.answers));
     const capturedEnqueteur = savedEnqueteur.value;
     let capturedPosteTravail = null;
 
@@ -860,7 +1012,7 @@ const finishSurvey = async () => {
     if (props.posteTravailQuestionId && savedPosteTravailValue.value !== null) {
       capturedPosteTravail = savedPosteTravailValue.value;
     }
-    
+
     // If not found in session, try to get from current answers
     if (!capturedPosteTravail && props.posteTravailQuestionId && capturedAnswersData.question_answers) {
       const posteAnswerObj = capturedAnswersData.question_answers.find(
@@ -870,13 +1022,13 @@ const finishSurvey = async () => {
         capturedPosteTravail = posteAnswerObj.optionId;
       }
     }
-    
+
     // If still not found, try direct property access
     if (!capturedPosteTravail && props.posteTravailQuestionId && capturedAnswersData[props.posteTravailQuestionId]) {
       capturedPosteTravail = capturedAnswersData[props.posteTravailQuestionId];
     }
 
-    isSurveyComplete.value = true;
+    activeSurvey.value.isSurveyComplete = true;
     const now = new Date();
     const uniqueSurveyInstanceId = await getNextId();
 
@@ -889,14 +1041,14 @@ const finishSurvey = async () => {
       HEURE_FIN: now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
       ENQUETEUR: capturedEnqueteur,
     };
-    
+
     // Add POSTE_TRAVAIL if available (legacy field for compatibility)
     if (capturedPosteTravail !== null) {
       surveyResult.POSTE_TRAVAIL = capturedPosteTravail;
     }
 
     // Sort answers by their position in the original surveyQuestions array
-    const sortedAnswers = capturedAnswersData.question_answers ? 
+    const sortedAnswers = capturedAnswersData.question_answers ?
       capturedAnswersData.question_answers.sort((a, b) => {
         const indexA = props.surveyQuestions.findIndex(q => q.id === a.questionId);
         const indexB = props.surveyQuestions.findIndex(q => q.id === b.questionId);
@@ -915,99 +1067,42 @@ const finishSurvey = async () => {
     }
 
     await addDoc(surveyCollectionRef.value, surveyResult);
-    
+
   } catch (error) {
     console.error("Error saving survey:", error);
   } finally {
-    isFinishing.value = false;
+    if (activeSurvey.value) {
+      activeSurvey.value.isFinishing = false;
+    }
   }
 };
 
 const resetSurvey = () => {
-  if (isFinishing.value) {
+  if (!activeSurvey.value || activeSurvey.value.isFinishing) {
     console.warn("Reset prevented: Survey is currently being finished.");
     return;
   }
-  
-  // Set start time for the new survey
-  const now = new Date();
-  startDate.value = now.toLocaleTimeString("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  
-  let firstQuestionIdToStart = null;
-  const posteTravailQId = props.posteTravailQuestionId;
 
-  // Clear previous answers 
-  answers.value = { question_answers: [] };
+  // Reset the current survey instead of creating a new one
+  const currentIndex = activeSurveyIndex.value;
 
-  if (posteTravailQId && savedPosteTravailValue.value !== null && findQuestionById(posteTravailQId)) {
-    // Record the remembered POSTE value in this new survey's answers
-    if (props.rememberPosteTravail && savedPosteTravailValue.value !== null && savedPosteTravailText.value) {
-        const posteQuestionForRecord = findQuestionById(posteTravailQId);
-        if(posteQuestionForRecord) {
-            recordAnswerToState(
-                posteTravailQId,
-                posteQuestionForRecord.text, 
-                savedPosteTravailValue.value,
-                savedPosteTravailText.value,
-                savedPosteTravailOptionIndex.value !== -1 ? savedPosteTravailOptionIndex.value : undefined
-            );
-        }
-    }
-    const posteQuestion = findQuestionById(posteTravailQId);
-    if (posteQuestion) {
-        const matchedOption = posteQuestion.options 
-            ? posteQuestion.options.find(opt => opt.id === savedPosteTravailValue.value)
-            : null;
-        firstQuestionIdToStart = getNextQuestionId(posteQuestion, matchedOption);
-        if (!firstQuestionIdToStart || firstQuestionIdToStart === posteTravailQId) {
-            const firstRegularQuestion = props.surveyQuestions.find(q => q.id !== posteTravailQId);
-            if (firstRegularQuestion) {
-                firstQuestionIdToStart = firstRegularQuestion.id;
-            } else if (props.surveyQuestions && props.surveyQuestions.length > 0 && props.surveyQuestions[0].id === posteTravailQId && props.surveyQuestions.length > 1) {
-                firstQuestionIdToStart = props.surveyQuestions[1].id;
-            } else if (props.surveyQuestions && props.surveyQuestions.length > 0) {
-                firstQuestionIdToStart = props.surveyQuestions[0].id;
-            } else {
-                firstQuestionIdToStart = null; 
-            }
-        }
-    } else {
-         firstQuestionIdToStart = (props.surveyQuestions && props.surveyQuestions.length > 0) ? props.surveyQuestions[0].id : null;
-    }
-  
-    if (!props.rememberPosteTravail) {
-        savedPosteTravailValue.value = null;
-        savedPosteTravailText.value = "";
-        savedPosteTravailOptionIndex.value = -1;
-    }
-  } else {
-    // No POSTE question configured or no saved value, start from beginning
-    if (props.surveyQuestions && props.surveyQuestions.length > 0) {
-      firstQuestionIdToStart = props.surveyQuestions[0].id;
-    }
-  }
+  // Reinitialize the current survey
+  surveys.value[currentIndex].answers = { question_answers: [] };
+  surveys.value[currentIndex].freeTextAnswer = "";
+  surveys.value[currentIndex].multipleChoiceSelections = [];
+  surveys.value[currentIndex].isSurveyComplete = false;
+  surveys.value[currentIndex].isFinishing = false;
+  surveys.value[currentIndex].selectedCommune = "";
+  surveys.value[currentIndex].postalCodePrefix = "";
+  surveys.value[currentIndex].stationInput = "";
+  surveys.value[currentIndex].streetInput = "";
+  surveys.value[currentIndex].selectedGareName = "";
+  surveys.value[currentIndex].filteredStations = [];
+  surveys.value[currentIndex].filteredStreets = [];
+  surveys.value[currentIndex].questionPath = [];
 
-  freeTextAnswer.value = "";
-  multipleChoiceSelections.value = [];
-  isSurveyComplete.value = false;
-  
-  currentQuestion.value = findQuestionById(firstQuestionIdToStart);
-  currentQuestionIndex.value = props.surveyQuestions.findIndex(q => q?.id === firstQuestionIdToStart);
-
-  if (currentQuestion.value) {
-    questionPath.value = [currentQuestion.value.id];
-    currentStep.value = 'survey'; 
-  } else if (firstQuestionIdToStart === 'end') {
-    currentStep.value = 'survey';
-    isSurveyComplete.value = true;
-  } else {
-    console.error("ResetSurvey: Could not determine the first question to restart.");
-    currentStep.value = 'start'; 
-  }
+  // Initialize the survey
+  initializeSurvey();
 };
 
 const getDocCount = async () => {
@@ -1563,16 +1658,134 @@ html, body {
 .progress-bar {
   width: 100%;
   height: 10px;
-  background-color: #e0e0e0; 
-  position: relative; 
-  overflow: hidden; 
-  margin-bottom: 20px; 
+  background-color: #e0e0e0;
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 20px;
 }
 
 .progress {
   height: 100%;
-  background-color: #4caf50; 
-  transition: width 0.3s ease-in-out; 
+  background-color: #4caf50;
+  transition: width 0.3s ease-in-out;
+}
+
+/* Survey Tabs Styles */
+.survey-tabs-container {
+  width: 100%;
+  background-color: #1e2b47;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-bottom: 2px solid #4a5a83;
+}
+
+.survey-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.survey-tab {
+  padding: 10px 16px;
+  background-color: #4a5a83;
+  color: white;
+  border: 2px solid transparent;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: rgba(0,0,0,0.1);
+  touch-action: manipulation;
+}
+
+.survey-tab:hover {
+  background-color: #5a6a93;
+}
+
+.survey-tab.active {
+  background-color: #2a3b63;
+  border-bottom: 2px solid #4caf50;
+  font-weight: 600;
+}
+
+.survey-tab.completed {
+  background-color: #2e7d32;
+  opacity: 0.8;
+}
+
+.survey-tab.completed.active {
+  background-color: #1b5e20;
+  opacity: 1;
+}
+
+.completed-badge {
+  background-color: white;
+  color: #2e7d32;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.btn-new-vehicle {
+  padding: 10px 20px;
+  background-color: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  align-self: flex-start;
+  -webkit-tap-highlight-color: rgba(0,0,0,0.1);
+  touch-action: manipulation;
+}
+
+.btn-new-vehicle:hover {
+  background-color: #45a049;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.btn-new-vehicle:active {
+  transform: translateY(0);
+}
+
+.survey-complete-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  width: 100%;
+  align-items: center;
+}
+
+@media screen and (max-width: 768px) {
+  .survey-tabs-container {
+    padding: 8px;
+  }
+
+  .survey-tab {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
+  .btn-new-vehicle {
+    width: 100%;
+    padding: 12px;
+  }
 }
 
 @media screen and (max-width: 480px) {
